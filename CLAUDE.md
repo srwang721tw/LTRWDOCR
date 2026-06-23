@@ -11,13 +11,15 @@ source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
+On macOS arm64 (Apple Silicon) the correct TensorFlow package is `tensorflow` (not `tensorflow-cpu` or `tensorflow-metal`). Without `tensorflow-metal` installed, it runs CPU-only, which is intentional.
+
 ## Common commands
 
 | Task | Command |
 |------|---------|
-| Download CAPTCHAs | `python -m src.download --count 1000 --delay 1.5` |
-| Segment digits | `python -m src.preprocess` |
-| Label segments | `python -m src.label` |
+| Download CAPTCHAs | `python -m src.download --count 1000` |
+| Label (plain) | `python -m src.label` |
+| Label (model-assisted) | `python -m src.label --model models/digit_cnn.h5` |
 | Train model | `python -m src.train` |
 | Predict one image | `python -m src.predict --image data/raw/<file>.png` |
 | Run tests | `pytest tests/` |
@@ -27,26 +29,41 @@ All `python -m src.*` commands must be run from the project root.
 
 ## Architecture
 
-The pipeline has five independent stages, each in its own module under `src/`:
+The pipeline has four stages:
 
-1. **`download.py`** — fetches raw CAPTCHA PNGs from `CAPTCHA_URL` (loaded from `.env`).
-2. **`preprocess.py`** — CLAHE contrast enhancement → vertical-projection digit segmentation → 28×28 crops in `data/segments/`.
-3. **`label.py`** — cv2 window shows each full CAPTCHA; user types the full answer; script maps characters to segment files and copies them to `data/0/`–`data/9/`.
-4. **`train.py`** — loads `data/0`–`data/9`, 70/15/15 stratified split, trains a small CNN with `EarlyStopping`, saves to `models/digit_cnn.h5`.
-5. **`predict.py`** — loads `.h5`, runs stages 2+4 on a new image, returns digit string.
+1. **`download.py`** — fetches raw CAPTCHA PNGs from `CAPTCHA_URL` (loaded from `.env`). Inter-request sleep is `random.uniform(0, delay_max)`.
 
-Data flows strictly forward: no stage reads output of a later stage.
+2. **`preprocess.py`** — three public functions used by all other modules:
+   - `enhance_contrast(img)` — converts to HSV, blends saturation channel (70%) with inverted grayscale (30%), applies CLAHE. Digit pixels become bright.
+   - `detect_n_digits(img)` — classifies image as 5-digit or 6-digit by measuring the mean binary projection in the discriminant zone (cols 10–20 in the 120 px reference). Zone mean ≥ 15% of overall max → 6 digits.
+   - `segment_digits(enhanced, n)` — splits the image into exactly `n` equal crops using the known fixed margins (`_MARGINS` dict), scaled to the actual image width. No projection-based boundary detection.
+
+3. **`label.py`** — interactive cv2 labeling tool. Segments on the fly during labeling (no pre-processing step required). Supports `--model` flag for assisted mode where the model pre-fills the predicted answer. Uses `len(answer)` (not `detect_n_digits`) for segmentation to keep labeling authoritative.
+
+4. **`train.py`** — loads `data/0`–`data/9`, 70/15/15 stratified split, trains CNN with `EarlyStopping`, saves `models/digit_cnn.h5`.
+
+5. **`predict.py`** — calls `detect_n_digits` → `enhance_contrast` → `segment_digits` → model inference → digit string.
+
+`data/segments/` is **not** part of the main workflow. `process_batch` in `preprocess.py` exists only for ad-hoc inspection/testing.
+
+## Image spec
+
+- Actual downloaded size: **90 × 30 px**
+- Reference spec: 120 × 40 px (margins defined in this coordinate system)
+- 5-digit: 20 px margin each side → active cols 20–100
+- 6-digit: 10 px margin each side → active cols 10–110
+- Each digit crop resized to **28 × 28 px**
 
 ## Key constraints
 
-- **No GPU / CUDA** — model is CPU-only (`tensorflow-cpu`).
-- **No company / service names** in code, comments, or docs. Use "LTRWD service" or "CAPTCHA source" when referring to the data origin.
-- **Source URL is secret** — lives in `.env` only; `.env` is git-ignored. Check `.env.example` for the key name.
-- **Model format** — always `.h5` (HDF5) for cross-version portability. Do not use `.keras` or `.pkl`.
+- **No GPU / CUDA** — `tensorflow` without `tensorflow-metal`; CPU-only by design.
+- **No company / service names** in code, comments, or docs. Use "LTRWD service" or "CAPTCHA source".
+- **Source URL is secret** — lives in `.env` only; git-ignored. Key name: `CAPTCHA_URL`.
+- **Model format** — always `.h5` (HDF5). Do not use `.keras` or `.pkl`.
 - All source files follow **Google-style docstrings**, **KISS / DRY / SOLID** principles.
 
 ## Adding a new module
 
 - Place it in `src/` with an `if __name__ == "__main__"` CLI block using `argparse`.
 - Add corresponding tests in `tests/test_<module>.py`.
-- Do not import between stages (download ↔ preprocess ↔ label ↔ train ↔ predict) except `predict.py` importing from `preprocess.py`.
+- `predict.py` may import from `preprocess.py`. No other cross-stage imports.

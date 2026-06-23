@@ -1,21 +1,23 @@
 # LTRWDOCR
 
 An end-to-end pipeline for recognizing 5–6 digit numeric CAPTCHA images.  
-**No GPU required** — uses a small CNN (TensorFlow CPU).
+**No GPU required** — uses a small CNN (TensorFlow, CPU-only).
 
 ---
 
 ## Workflow overview
 
 ```
-Download → Preprocess → Label → Train → Predict
+Download → Label → Train → Predict
 ```
 
 1. **Download** raw CAPTCHA PNGs into `data/raw/`
-2. **Preprocess** — contrast enhancement + digit segmentation → `data/segments/`
-3. **Label** — interactive tool maps each segment to `data/0/` … `data/9/`
-4. **Train** — CNN with train / val / test split; model saved as `models/digit_cnn.h5`
-5. **Predict** — load model and infer the digit string from any CAPTCHA image
+2. **Label** — interactive cv2 tool; segments digits on the fly and saves crops to `data/0/`–`data/9/`
+3. **Train** — CNN with 70/15/15 train/val/test split; model saved as `models/digit_cnn.h5`
+4. **Predict** — load model and infer the digit string from any CAPTCHA image
+
+> No separate preprocessing step is needed before labeling.  
+> Digit count (5 or 6) and segmentation are handled automatically.
 
 ---
 
@@ -23,15 +25,15 @@ Download → Preprocess → Label → Train → Predict
 
 ```bash
 python3 -m venv .venv
-source .venv/bin/activate   # Windows: .venv\Scripts\activate
+source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
-Copy `.env.example` to `.env` and fill in the CAPTCHA source URL:
+Copy `.env.example` to `.env` and set the source URL:
 
 ```bash
 cp .env.example .env
-# edit .env and set CAPTCHA_URL=<your URL>
+# edit .env → CAPTCHA_URL=<your URL>
 ```
 
 ---
@@ -41,42 +43,58 @@ cp .env.example .env
 ### 1. Download images
 
 ```bash
-python -m src.download --count 1000 --out data/raw --delay 1.5
+python -m src.download --count 1000
 ```
 
-### 2. Segment digits
+Inter-request delay is a random float in `[0, delay_max]` seconds (default max = 1.0 s):
 
 ```bash
-python -m src.preprocess --raw data/raw --out data/segments
+python -m src.download --count 1000 --delay-max 0.8
 ```
 
-### 3. Label segments
+### 2. Label
 
-A **cv2 window** opens showing each full CAPTCHA. Type the digit answer in the
-terminal and press Enter. Type `q` to quit early.
+A cv2 window opens showing each CAPTCHA (scaled 4×). Type the answer in the terminal and press Enter.
 
 ```bash
-python -m src.label --raw data/raw --seg data/segments --out data
+python -m src.label
 ```
 
-### 4. Train
+**Assisted mode** (after a first training run — much faster):
 
 ```bash
-python -m src.train --data data --model models/digit_cnn.h5
+python -m src.label --model models/digit_cnn.h5
 ```
 
-Outputs train / val / test accuracy and a per-class `classification_report`.
+The model pre-fills the predicted answer; press Enter to confirm or type a correction.  
+The prompt also shows the digit class with the fewest samples so far.
 
-### 5. Predict
+| Key | Action |
+|-----|--------|
+| `<digits>` + Enter | Accept / correct answer |
+| Enter (blank) | Skip this image |
+| `q` + Enter | Quit |
+
+### 3. Train
 
 ```bash
-python -m src.predict --image data/raw/<filename>.png --model models/digit_cnn.h5
+python -m src.train
 ```
 
-Or use the example script:
+Prints a `classification_report` for the validation set (for tuning) and the test set (final, once).  
+Saves the best checkpoint to `models/digit_cnn.h5`.
+
+### 4. Predict
 
 ```bash
-python examples/predict_captcha.py
+python -m src.predict --image data/raw/<filename>.png
+```
+
+Or from Python:
+
+```python
+from src.predict import predict_captcha
+print(predict_captcha("data/raw/some.png"))   # e.g. "58884"
 ```
 
 ---
@@ -86,41 +104,58 @@ python examples/predict_captcha.py
 ```
 LTRWDOCR/
 ├── data/
-│   ├── raw/          # downloaded CAPTCHA images
-│   ├── segments/     # unlabeled digit crops
-│   └── 0/ … 9/      # labeled digit crops (one folder per class)
+│   ├── raw/      # downloaded CAPTCHA PNGs
+│   └── 0/ … 9/  # labeled digit crops, one folder per class
 ├── examples/
-│   └── predict_captcha.py   # minimal usage example
+│   └── predict_captcha.py   # minimal usage example for external programs
 ├── models/
-│   └── digit_cnn.h5         # trained model (after training)
+│   └── digit_cnn.h5         # trained model (HDF5, load with tf.keras)
 ├── src/
-│   ├── download.py
-│   ├── preprocess.py
-│   ├── label.py
-│   ├── train.py
-│   └── predict.py
+│   ├── download.py     # loop-download with random delay
+│   ├── preprocess.py   # enhance_contrast, detect_n_digits, segment_digits
+│   ├── label.py        # interactive labeling (plain + model-assisted)
+│   ├── train.py        # CNN training with train/val/test split
+│   └── predict.py      # load model → predict CAPTCHA string
 ├── tests/
 ├── .env.example
 ├── requirements.txt
-└── README.md
+└── CLAUDE.md
 ```
+
+---
+
+## Image format & segmentation
+
+Raw CAPTCHAs are **90 × 30 px** (120 × 40 px reference spec).
+
+| Type | Left/right margin | Active columns (120 px ref) | Digits |
+|------|-------------------|-----------------------------|--------|
+| 5-digit | 20 px | 20–100 (80 px, 16 px each) | 5 |
+| 6-digit | 10 px | 10–110 (100 px, 16.7 px each) | 6 |
+
+`detect_n_digits` classifies the image by computing the mean binary projection in the discriminant zone (cols 10–20 in the 120 px reference). A high mean indicates digit content → 6-digit; a low mean indicates margin → 5-digit.
+
+Each digit crop is resized to **28 × 28 px** before being fed to the model.
 
 ---
 
 ## Model
 
-| Layer | Output shape |
-|-------|-------------|
-| Conv2D(32, 3, relu) | 28×28×32 |
-| MaxPool(2) | 14×14×32 |
-| Conv2D(64, 3, relu) | 14×14×64 |
-| MaxPool(2) | 7×7×64 |
+| Layer | Output |
+|-------|--------|
+| Conv2D(32, 3×3, relu) | 28×28×32 |
+| MaxPool(2×2) | 14×14×32 |
+| Conv2D(64, 3×3, relu) | 14×14×64 |
+| MaxPool(2×2) | 7×7×64 |
 | Dense(128, relu) + Dropout(0.5) | 128 |
 | Dense(10, softmax) | 10 |
 
-Input: 28×28 grayscale digit crop, values in [0, 1].  
-Training: Adam optimizer, EarlyStopping (patience=5) on val_loss.  
-Serialized as `.h5` (HDF5) — load with `tf.keras.models.load_model()`.
+- Optimizer: Adam  
+- Loss: sparse categorical cross-entropy  
+- Early stopping: patience=5 on `val_loss`  
+- Saved as `.h5` (HDF5) — portable, loadable with `tf.keras.models.load_model()`
+
+Achieved **~99.7% per-digit accuracy** (test set) with 150 labeled CAPTCHAs.
 
 ---
 
