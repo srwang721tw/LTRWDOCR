@@ -8,11 +8,19 @@ import numpy as np
 from PIL import Image
 
 _DIGIT_SIZE = 28
-_PROJECTION_SMOOTH = 3
-_PROJECTION_THRESH_RATIO = 0.05
 _EXPECTED_DIGITS = (5, 6)
-# Half-width of the valley-search window around each ideal cut position.
-_CUT_SEARCH_WINDOW = 3
+
+# Reference image dimensions (120 × 40 px) and known fixed margins.
+# 5-digit CAPTCHAs: 20 px margin on each side  → active cols 20–100 (80 px, 16 px/digit)
+# 6-digit CAPTCHAs: 10 px margin on each side  → active cols 10–110 (100 px, 16.67 px/digit)
+_REF_WIDTH = 120
+_MARGINS: dict[int, tuple[int, int]] = {
+    5: (20, 100),
+    6: (10, 110),
+}
+# Midpoint between the two margins (15 px) used to classify digit count.
+_MARGIN_MID = 15
+
 
 
 def enhance_contrast(img: Image.Image) -> Image.Image:
@@ -44,124 +52,89 @@ def enhance_contrast(img: Image.Image) -> Image.Image:
     return Image.fromarray(enhanced)
 
 
-def _equal_split_refined(
-    left: int,
-    right: int,
-    n: int,
-    projection: np.ndarray,
-) -> list[tuple[int, int]]:
-    """Divide [left, right] into n equal parts, nudging each cut to the deepest
-    projection valley within ``_CUT_SEARCH_WINDOW`` pixels of the ideal position.
+def detect_n_digits(img: Image.Image) -> int:
+    """Classify a CAPTCHA as 5-digit or 6-digit from its left whitespace.
 
-    The valley snap is only applied when the found minimum is clearly lower than
-    the ideal-position value (i.e. a genuine inter-digit gap exists nearby).
-    When digits are touching and no real gap is present, the ideal equal-width
-    position is kept so cuts stay inside the correct digit rather than drifting
-    to a thin stroke of the wrong character.
+    The enhanced binary projection is used to locate where digit content
+    begins.  A 6-digit CAPTCHA has a narrower left margin (≈10 px in the
+    120 px reference), so strong digit columns appear earlier than in the
+    5-digit variant (≈20 px margin).  The midpoint between the two expected
+    starts (15 px in the 120 px reference, i.e. 11 px in a 90 px image)
+    separates the two cases reliably even in the presence of background noise.
 
     Args:
-        left: First active column (inclusive).
-        right: Last active column (exclusive).
-        n: Number of segments to produce.
-        projection: Smoothed 1-D vertical projection of the binary image.
+        img: Original PIL CAPTCHA image (any mode).
 
     Returns:
-        List of n (x0, x1) column pairs.
+        5 or 6.
     """
-    width = right - left
-    cut_positions = [left]
-
-    for i in range(1, n):
-        ideal = left + round(i * width / n)
-        lo = max(left, ideal - _CUT_SEARCH_WINDOW)
-        hi = min(right, ideal + _CUT_SEARCH_WINDOW + 1)
-        sub = projection[lo:hi]
-
-        if len(sub) > 0:
-            valley_offset = int(np.argmin(sub))
-            valley = lo + valley_offset
-            # Only snap when the valley is meaningfully lower than the ideal
-            # position (genuine gap), not just a thin stroke within a digit.
-            ideal_val = projection[ideal] if ideal < len(projection) else sub[valley_offset]
-            valley_val = sub[valley_offset]
-            cut = valley if valley_val < ideal_val * 0.6 else ideal
-        else:
-            cut = ideal
-
-        cut_positions.append(cut)
-
-    cut_positions.append(right)
-    return [(cut_positions[i], cut_positions[i + 1]) for i in range(n)]
-
-
-def segment_digits(img: Image.Image, n: int) -> list[Image.Image]:
-    """Split a CAPTCHA image into exactly n digit crops.
-
-    Pipeline:
-      1. Otsu threshold (bright digit pixels → white).
-      2. Morphological closing to reconnect fragmented strokes.
-      3. Smoothed vertical projection to locate the active region.
-      4. Equal-width split of the active region into n parts, with each
-         cut nudged to the nearest local projection valley.
-      5. Crop and resize each part to ``_DIGIT_SIZE × _DIGIT_SIZE``.
-
-    The caller is responsible for supplying the correct ``n`` (5 or 6).
-    During labeling this is the length of the typed answer; during inference
-    both n=5 and n=6 are tried and the model picks the better prediction.
-
-    Args:
-        img: PIL image output of :func:`enhance_contrast`.
-        n: Number of digits to extract (typically 5 or 6).
-
-    Returns:
-        List of exactly n square PIL images, or an empty list when the
-        image appears blank.
-    """
-    gray = np.array(img.convert("L"))
+    enhanced = enhance_contrast(img)
+    gray = np.array(enhanced.convert("L"))
+    w = gray.shape[1]
 
     _, binary = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+    proj = binary.sum(axis=0).astype(float)
 
-    kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (1, 3))
-    binary = cv2.morphologyEx(binary, cv2.MORPH_CLOSE, kernel)
+    if proj.max() == 0:
+        return 6  # fallback for blank image
 
-    projection = binary.sum(axis=0).astype(float)
-    smooth_k = np.ones(_PROJECTION_SMOOTH) / _PROJECTION_SMOOTH
-    projection = np.convolve(projection, smooth_k, mode="same")
+    # Find first column whose projection is ≥ 40 % of the image maximum.
+    # Such a column contains genuine digit content, not scattered noise dots.
+    strong_threshold = proj.max() * 0.40
+    left_bound = w
+    for col in range(w):
+        if proj[col] >= strong_threshold:
+            left_bound = col
+            break
 
-    if projection.max() == 0:
-        return []
+    # Midpoint between the two expected margin widths, scaled to actual width.
+    # 120 px reference: midpoint at 15 px → 11 px in a 90 px image.
+    midpoint = round(_MARGIN_MID * w / _REF_WIDTH)
+    return 6 if left_bound <= midpoint else 5
 
-    col_thresh = projection.max() * _PROJECTION_THRESH_RATIO
-    active_cols = projection > col_thresh
 
-    if not active_cols.any():
-        return []
+def segment_digits(enhanced: Image.Image, n: int) -> list[Image.Image]:
+    """Split a CAPTCHA into exactly n equal digit crops using fixed margins.
 
-    left_bound = int(np.argmax(active_cols))
-    right_bound = int(len(active_cols) - 1 - np.argmax(active_cols[::-1])) + 1
+    The active region is defined by the known fixed margins for the given
+    digit count, scaled to the actual image width.  Each crop is resized to
+    ``_DIGIT_SIZE × _DIGIT_SIZE``.
 
-    segments = _equal_split_refined(left_bound, right_bound, n, projection)
+    Args:
+        enhanced: Grayscale PIL image output of :func:`enhance_contrast`.
+        n: Number of digits to extract (5 or 6).
+
+    Returns:
+        List of exactly n square PIL images.
+    """
+    gray = np.array(enhanced.convert("L"))
+    w = gray.shape[1]
+    scale = w / _REF_WIDTH
+
+    ref_left, ref_right = _MARGINS[n]
+    left = round(ref_left * scale)
+    right = round(ref_right * scale)
+    width = right - left
 
     crops: list[Image.Image] = []
-    for x0, x1 in segments:
-        crop = Image.fromarray(gray[:, max(0, x0):min(gray.shape[1], x1)])
+    for i in range(n):
+        x0 = left + round(i * width / n)
+        x1 = left + round((i + 1) * width / n)
+        crop = Image.fromarray(gray[:, x0:x1])
         crop = crop.resize((_DIGIT_SIZE, _DIGIT_SIZE), Image.LANCZOS)
         crops.append(crop)
 
     return crops
 
 
-def process_batch(raw_dir: str | Path, seg_dir: str | Path, n: int) -> int:
-    """Enhance and segment all raw CAPTCHA images in a directory.
+def process_batch(raw_dir: str | Path, seg_dir: str | Path) -> int:
+    """Enhance and segment all raw CAPTCHA images, auto-detecting digit count.
 
-    Skips images that are already segmented or that return a blank result.
-    The caller must supply the correct digit count ``n``; this function is
-    mainly used for testing the segmentation visually before labeling.
+    Skips images that are already segmented.
 
     Args:
         raw_dir: Directory containing raw CAPTCHA PNG files.
         seg_dir: Directory in which to write ``{stem}_d{i}.png`` crops.
-        n: Number of digits per CAPTCHA (5 or 6).
 
     Returns:
         Total number of segment files written.
@@ -172,7 +145,7 @@ def process_batch(raw_dir: str | Path, seg_dir: str | Path, n: int) -> int:
 
     written = 0
     images = sorted(raw_path.glob("*.png"))
-    print(f"Processing {len(images)} images with n={n} …")
+    print(f"Processing {len(images)} images …")
 
     for img_file in images:
         if list(seg_path.glob(f"{img_file.stem}_d*.png")):
@@ -180,14 +153,11 @@ def process_batch(raw_dir: str | Path, seg_dir: str | Path, n: int) -> int:
 
         try:
             img = Image.open(img_file)
+            n = detect_n_digits(img)
             enhanced = enhance_contrast(img)
             digits = segment_digits(enhanced, n)
         except Exception as exc:  # noqa: BLE001
             print(f"  [skip] {img_file.name}: {exc}")
-            continue
-
-        if not digits:
-            print(f"  [skip] {img_file.name}: blank image")
             continue
 
         for i, digit_img in enumerate(digits):
