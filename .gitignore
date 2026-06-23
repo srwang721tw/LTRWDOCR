@@ -1,0 +1,37 @@
+# Virtual environment
+.venv/
+
+# Environment variables
+.env
+
+# Data images — keep directory structure, ignore binary content
+data/raw/*.png
+data/segments/*.png
+data/0/*.png
+data/1/*.png
+data/2/*.png
+data/3/*.png
+data/4/*.png
+data/5/*.png
+data/6/*.png
+data/7/*.png
+data/8/*.png
+data/9/*.png
+
+# Trained models
+models/*.h5
+
+# Python cache
+__pycache__/
+*.py[cod]
+*.pyo
+.pytest_cache/
+*.egg-info/
+dist/
+build/
+
+# macOS
+.DS_Store
+
+# Jupyter
+.ipynb_checkpoints/
