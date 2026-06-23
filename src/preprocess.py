@@ -55,12 +55,16 @@ def enhance_contrast(img: Image.Image) -> Image.Image:
 def detect_n_digits(img: Image.Image) -> int:
     """Classify a CAPTCHA as 5-digit or 6-digit from its left whitespace.
 
-    The enhanced binary projection is used to locate where digit content
-    begins.  A 6-digit CAPTCHA has a narrower left margin (≈10 px in the
-    120 px reference), so strong digit columns appear earlier than in the
-    5-digit variant (≈20 px margin).  The midpoint between the two expected
-    starts (15 px in the 120 px reference, i.e. 11 px in a 90 px image)
-    separates the two cases reliably even in the presence of background noise.
+    Uses the mean projection of the enhanced binary image in the "discriminant
+    zone" — columns that would contain digit content for a 6-digit CAPTCHA but
+    are still pure margin for a 5-digit one (cols 10–20 in the 120 px reference,
+    i.e. cols 7–15 in a 90 px image).
+
+    A high mean in this zone means digits are already present → 6-digit image.
+    A low mean means the zone is still background/margin → 5-digit image.
+
+    This zone-mean approach is more robust than checking only the first "strong"
+    column, which can be thrown off by a single bright noise pixel.
 
     Args:
         img: Original PIL CAPTCHA image (any mode).
@@ -78,19 +82,14 @@ def detect_n_digits(img: Image.Image) -> int:
     if proj.max() == 0:
         return 6  # fallback for blank image
 
-    # Find first column whose projection is ≥ 40 % of the image maximum.
-    # Such a column contains genuine digit content, not scattered noise dots.
-    strong_threshold = proj.max() * 0.40
-    left_bound = w
-    for col in range(w):
-        if proj[col] >= strong_threshold:
-            left_bound = col
-            break
+    # Discriminant zone: where 6-digit content begins but 5-digit margin still holds.
+    # 120 px reference: col 10 (6-digit start) to col 20 (5-digit start).
+    zone_start = round(_MARGINS[6][0] * w / _REF_WIDTH)  # ≈ col 7 in 90 px
+    zone_end = round(_MARGINS[5][0] * w / _REF_WIDTH)    # ≈ col 15 in 90 px
+    zone_mean = proj[zone_start:zone_end].mean()
 
-    # Midpoint between the two expected margin widths, scaled to actual width.
-    # 120 px reference: midpoint at 15 px → 11 px in a 90 px image.
-    midpoint = round(_MARGIN_MID * w / _REF_WIDTH)
-    return 6 if left_bound <= midpoint else 5
+    # If zone mean exceeds 15 % of the overall max, digit content is present → 6.
+    return 6 if zone_mean >= proj.max() * 0.15 else 5
 
 
 def segment_digits(enhanced: Image.Image, n: int) -> list[Image.Image]:
