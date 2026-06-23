@@ -2,6 +2,7 @@
 
 import argparse
 import os
+import random
 import time
 from pathlib import Path
 
@@ -11,14 +12,14 @@ from dotenv import load_dotenv
 load_dotenv()
 
 _DEFAULT_URL = os.getenv("CAPTCHA_URL", "")
-_DEFAULT_DELAY = 1.5
+_DEFAULT_DELAY_MAX = 1.0
 _DEFAULT_COUNT = 1000
 
 
 def download_captchas(
     n: int,
     out_dir: str | Path,
-    delay: float = _DEFAULT_DELAY,
+    delay_max: float = _DEFAULT_DELAY_MAX,
     url: str = _DEFAULT_URL,
 ) -> list[Path]:
     """Download CAPTCHA images in a loop and save them to disk.
@@ -26,7 +27,8 @@ def download_captchas(
     Args:
         n: Number of images to download.
         out_dir: Directory in which to save images.
-        delay: Seconds to sleep between requests.
+        delay_max: Upper bound (seconds) for the random inter-request sleep;
+            actual delay is drawn from uniform(0, delay_max).
         url: CAPTCHA endpoint URL (defaults to CAPTCHA_URL env var).
 
     Returns:
@@ -57,7 +59,7 @@ def download_captchas(
 
         print(f"[{i + 1}/{n}] saved {filename.name}")
         if i < n - 1:
-            time.sleep(delay)
+            time.sleep(random.uniform(0, delay_max))
 
     return saved
 
@@ -66,11 +68,11 @@ def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Download CAPTCHA images.")
     parser.add_argument("--count", type=int, default=_DEFAULT_COUNT)
     parser.add_argument("--out", default="data/raw")
-    parser.add_argument("--delay", type=float, default=_DEFAULT_DELAY)
+    parser.add_argument("--delay-max", type=float, default=_DEFAULT_DELAY_MAX)
     return parser.parse_args()
 
 
 if __name__ == "__main__":
     args = _parse_args()
-    paths = download_captchas(args.count, args.out, args.delay)
+    paths = download_captchas(args.count, args.out, args.delay_max)
     print(f"\nDone. {len(paths)} images saved to {args.out}")

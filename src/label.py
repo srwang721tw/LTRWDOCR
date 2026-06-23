@@ -1,60 +1,48 @@
-"""Interactive labeling tool: display CAPTCHA → user types answer → sort segments."""
+"""Interactive labeling tool: show CAPTCHA → user types answer → segment on the fly."""
 
 import argparse
-import shutil
 from pathlib import Path
 
 import cv2
 import numpy as np
 from PIL import Image
 
-
-def _load_cv2(path: Path) -> np.ndarray:
-    """Load an image as a BGR numpy array suitable for cv2.imshow."""
-    img = Image.open(path).convert("RGB")
-    return cv2.cvtColor(np.array(img), cv2.COLOR_RGB2BGR)
+from src.preprocess import enhance_contrast, segment_digits, _EXPECTED_DIGITS
 
 
-def _segments_for(raw_stem: str, seg_dir: Path) -> list[Path]:
-    """Return sorted segment paths for a given raw image stem."""
-    return sorted(seg_dir.glob(f"{raw_stem}_d*.png"))
+def _to_cv2(img: Image.Image) -> np.ndarray:
+    """Convert a PIL image to a BGR numpy array for cv2.imshow."""
+    return cv2.cvtColor(np.array(img.convert("RGB")), cv2.COLOR_RGB2BGR)
 
 
-def _already_labeled(raw_stem: str, seg_dir: Path, out_base: Path) -> bool:
-    """Return True if every segment for this raw image has been distributed."""
-    segs = _segments_for(raw_stem, seg_dir)
-    if not segs:
-        return False
-    return all(
-        any((out_base / str(d) / seg.name).exists() for d in range(10))
-        for seg in segs
+def _already_labeled(raw_stem: str, out_base: Path) -> bool:
+    """Return True if any digit class folder contains a file for this stem."""
+    return any(
+        (out_base / str(d) / f"{raw_stem}_d0.png").exists() for d in range(10)
     )
 
 
-def label_batch(
-    raw_dir: str | Path,
-    seg_dir: str | Path,
-    out_base: str | Path,
-) -> int:
-    """Interactively label segmented digit crops using their parent CAPTCHA image.
+def label_batch(raw_dir: str | Path, out_base: str | Path) -> int:
+    """Interactively label CAPTCHA images.
 
-    For each unlabeled CAPTCHA in ``raw_dir``:
+    For each unlabeled raw CAPTCHA:
 
-    1. Opens a cv2 window showing the full CAPTCHA.
-    2. Prompts the user to type the digit string (e.g. ``38271``).
-    3. Maps each typed character to the corresponding segment file.
-    4. Copies each segment to ``out_base/{digit}/``.
+    1. Opens a cv2 window showing the full image (scaled 4× for readability).
+    2. Prompts the user to type the digit string in the terminal.
+    3. Segments the image on the fly using the answer length as digit count.
+    4. Copies each segment crop to ``out_base/{digit}/``.
+
+    Type ``q`` or ``quit`` to stop early.  Invalid answers (wrong length or
+    non-digit characters) are skipped with a warning.
 
     Args:
         raw_dir: Directory containing raw CAPTCHA PNG files.
-        seg_dir: Directory containing segmented digit PNG files.
         out_base: Root directory whose subdirectories ``0``–``9`` receive crops.
 
     Returns:
-        Number of digit images successfully labeled and copied.
+        Number of digit images successfully labeled and saved.
     """
     raw_path = Path(raw_dir)
-    seg_path = Path(seg_dir)
     out_path = Path(out_base)
 
     for d in range(10):
@@ -62,33 +50,38 @@ def label_batch(
 
     labeled = 0
     raw_images = sorted(raw_path.glob("*.png"))
-    pending = [
-        f for f in raw_images if not _already_labeled(f.stem, seg_path, out_path)
-    ]
-
-    print(f"{len(pending)} images to label (press 'q' in window to quit early).")
+    pending = [f for f in raw_images if not _already_labeled(f.stem, out_path)]
+    print(f"{len(pending)} images to label. Type 'q' to quit, Enter to skip.")
 
     for raw_file in pending:
-        segs = _segments_for(raw_file.stem, seg_path)
-        if not segs:
-            continue
+        img = Image.open(raw_file)
 
-        frame = _load_cv2(raw_file)
-        cv2.imshow("CAPTCHA — type answer in terminal, then press Enter", frame)
-        cv2.waitKey(1)  # pump event loop so window appears
+        # Scale up for visibility (4×) and show in cv2 window
+        display = img.resize((img.width * 4, img.height * 4), Image.NEAREST)
+        frame = _to_cv2(display)
+        cv2.imshow("CAPTCHA — type answer in terminal", frame)
+        cv2.waitKey(1)
 
-        answer = input(f"\n{raw_file.name} ({len(segs)} digits) > ").strip()
+        answer = input(f"\n{raw_file.name} > ").strip()
 
-        if answer.lower() == "q":
+        if answer.lower() in ("q", "quit"):
             break
-
-        if len(answer) != len(segs) or not answer.isdigit():
-            print(f"  [skip] expected {len(segs)} digits, got '{answer}'")
+        if not answer:
+            continue
+        if not answer.isdigit() or len(answer) not in _EXPECTED_DIGITS:
+            print(f"  [skip] expected {_EXPECTED_DIGITS}-digit answer, got '{answer}'")
             continue
 
-        for seg_file, char in zip(segs, answer):
-            dest = out_path / char / seg_file.name
-            shutil.copy2(seg_file, dest)
+        enhanced = enhance_contrast(img)
+        segs = segment_digits(enhanced, len(answer))
+
+        if len(segs) != len(answer):
+            print(f"  [skip] segmentation returned {len(segs)} crops for {len(answer)}-char answer")
+            continue
+
+        for i, (seg, char) in enumerate(zip(segs, answer)):
+            dest = out_path / char / f"{raw_file.stem}_{i}.png"
+            seg.save(dest)
             labeled += 1
 
     cv2.destroyAllWindows()
@@ -98,12 +91,11 @@ def label_batch(
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Interactively label digit crops.")
     parser.add_argument("--raw", default="data/raw")
-    parser.add_argument("--seg", default="data/segments")
     parser.add_argument("--out", default="data")
     return parser.parse_args()
 
 
 if __name__ == "__main__":
     args = _parse_args()
-    count = label_batch(args.raw, args.seg, args.out)
+    count = label_batch(args.raw, args.out)
     print(f"\nDone. {count} digit images labeled.")
