@@ -124,18 +124,19 @@ LTRWDOCR/
 
 ---
 
-## Image format & segmentation
+## Image formats & segmentation
 
-Raw CAPTCHAs are **90 × 30 px** (120 × 40 px reference spec).
+Three CAPTCHA formats are supported:
 
-| Type | Left/right margin | Active columns (120 px ref) | Digits |
-|------|-------------------|-----------------------------|--------|
-| 5-digit | 20 px | 20–100 (80 px, 16 px each) | 5 |
-| 6-digit | 10 px | 10–110 (100 px, 16.7 px each) | 6 |
+| Format | Size | Digits | Active columns | Detection method |
+|--------|------|--------|----------------|-----------------|
+| 4-digit JPEG | 56 × 20 px | 4 | cols 3–47 (actual px) | Image width ≤ 65 px |
+| 5-digit PNG  | 90 × 30 px | 5 | cols 20–100 (120 px ref) | Zone-mean: low → 5 |
+| 6-digit PNG  | 90 × 30 px | 6 | cols 10–110 (120 px ref) | Zone-mean: high → 6 |
 
-`detect_n_digits` classifies the image by computing the mean binary projection in the discriminant zone (cols 10–20 in the 120 px reference). A high mean indicates digit content → 6-digit; a low mean indicates margin → 5-digit.
+`detect_n_digits` first checks image width (≤ 65 px → 4 digits). For wider images it computes the mean binary projection in the discriminant zone (cols 10–20 in the 120 px reference): a high mean indicates digit content is already present → 6-digit; a low mean indicates margin → 5-digit.
 
-Each digit crop is resized to **28 × 28 px** before being fed to the model.
+All crops are resized to **28 × 28 px** before being fed to the model.
 
 ---
 

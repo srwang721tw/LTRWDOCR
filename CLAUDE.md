@@ -35,10 +35,10 @@ The pipeline has four stages:
 
 2. **`preprocess.py`** — three public functions used by all other modules:
    - `enhance_contrast(img)` — converts to HSV, blends saturation channel (70%) with inverted grayscale (30%), applies CLAHE. Digit pixels become bright.
-   - `detect_n_digits(img)` — classifies image as 5-digit or 6-digit by measuring the mean binary projection in the discriminant zone (cols 10–20 in the 120 px reference). Zone mean ≥ 15% of overall max → 6 digits.
-   - `segment_digits(enhanced, n)` — splits the image into exactly `n` equal crops using the known fixed margins (`_MARGINS` dict), scaled to the actual image width. No projection-based boundary detection.
+   - `detect_n_digits(img)` — classifies image as 4-, 5-, or 6-digit. Width ≤ 65 px → 4 digits. Otherwise uses discriminant-zone mean (cols 10–20 in 120 px reference): zone mean ≥ 15% of overall max → 6 digits.
+   - `segment_digits(enhanced, n)` — splits the image into exactly `n` equal crops using the known fixed margins (`_MARGINS` dict), scaled by `actual_width / _REF_WIDTHS[n]`. No projection-based boundary detection.
 
-3. **`label.py`** — interactive cv2 labeling tool. Segments on the fly during labeling (no pre-processing step required). Supports `--model` flag for assisted mode where the model pre-fills the predicted answer. Uses `len(answer)` (not `detect_n_digits`) for segmentation to keep labeling authoritative.
+3. **`label.py`** — interactive cv2 labeling tool. Handles PNG, JPG, and JPEG files. Segments on the fly during labeling (no pre-processing step required). Supports `--model` flag for assisted mode where the model pre-fills the predicted answer. Uses `len(answer)` (not `detect_n_digits`) for segmentation to keep labeling authoritative.
 
 4. **`train.py`** — loads `data/0`–`data/9`, 70/15/15 stratified split, trains CNN with `EarlyStopping`, saves `models/digit_cnn.h5`.
 
@@ -48,11 +48,15 @@ The pipeline has four stages:
 
 ## Image spec
 
-- Actual downloaded size: **90 × 30 px**
-- Reference spec: 120 × 40 px (margins defined in this coordinate system)
-- 5-digit: 20 px margin each side → active cols 20–100
-- 6-digit: 10 px margin each side → active cols 10–110
-- Each digit crop resized to **28 × 28 px**
+Three formats are supported simultaneously:
+
+| Format | Actual size | Digits | Active cols | Reference width |
+|--------|-------------|--------|-------------|-----------------|
+| 4-digit JPEG | 56 × 20 px | 4 | 3–47 (actual px) | 56 px |
+| 5-digit PNG  | 90 × 30 px | 5 | 20–100 (ref) | 120 px |
+| 6-digit PNG  | 90 × 30 px | 6 | 10–110 (ref) | 120 px |
+
+Each digit crop is resized to **28 × 28 px**.
 
 ## Key constraints
 

@@ -12,7 +12,7 @@ import cv2
 import numpy as np
 from PIL import Image
 
-from src.preprocess import detect_n_digits, enhance_contrast, segment_digits, _EXPECTED_DIGITS
+from src.preprocess import detect_n_digits, enhance_contrast, segment_digits, _EXPECTED_DIGITS, _IMAGE_EXTS
 
 
 def _to_cv2(img: Image.Image) -> np.ndarray:
@@ -91,7 +91,7 @@ def label_batch(
         print("Assisted mode: model will pre-fill answers. Press Enter to confirm.")
 
     labeled = 0
-    raw_images = sorted(raw_path.glob("*.png"))
+    raw_images = sorted(f for f in raw_path.iterdir() if f.suffix.lower() in _IMAGE_EXTS)
     pending = [f for f in raw_images if not _already_labeled(f.stem, out_path)]
     total = len(pending)
     print(f"{total} images to label. Type 'q' to quit, Enter to skip.\n")
