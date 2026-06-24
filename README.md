@@ -1,5 +1,12 @@
 # LTRWDOCR — Numeric CAPTCHA Recognition
 
+![Python](https://img.shields.io/badge/Python-3.12-3776AB?logo=python&logoColor=white)
+![TensorFlow](https://img.shields.io/badge/TensorFlow-2.21-FF6F00?logo=tensorflow&logoColor=white)
+![OpenCV](https://img.shields.io/badge/OpenCV-4.13-5C3EE8?logo=opencv&logoColor=white)
+![scikit-learn](https://img.shields.io/badge/scikit--learn-1.9-F7931E?logo=scikit-learn&logoColor=white)
+![Accuracy](https://img.shields.io/badge/Accuracy-99.82%25-brightgreen)
+![CPU Only](https://img.shields.io/badge/GPU-Not%20Required-lightgrey)
+
 > **99.82% per-digit accuracy** across 4-, 5-, and 6-digit CAPTCHA formats.  
 > CPU-only inference · No GPU required · Portable `.h5` model
 
