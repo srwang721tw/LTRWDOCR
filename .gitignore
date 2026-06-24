@@ -4,19 +4,10 @@
 # Environment variables
 .env
 
-# Data images — keep directory structure, ignore binary content
-data/raw/*.png
-data/segments/*.png
-data/0/*.png
-data/1/*.png
-data/2/*.png
-data/3/*.png
-data/4/*.png
-data/5/*.png
-data/6/*.png
-data/7/*.png
-data/8/*.png
-data/9/*.png
+# Data images — keep directory structure (.gitkeep), ignore all image files
+data/**/*.png
+data/**/*.jpg
+data/**/*.jpeg
 
 # Trained models
 models/*.h5
