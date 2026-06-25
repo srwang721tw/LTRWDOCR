@@ -152,14 +152,35 @@ python -m src.predict --image data/raw/some_captcha.png
 # → Predicted CAPTCHA: 58884
 ```
 
-**From Python (integration example):**
+---
+
+## Standalone integration
+
+To use the model in **any other project**, copy just two files:
+
+```
+captcha_predictor.py   ← self-contained, no project dependencies
+models/digit_cnn.h5    ← trained model weights
+```
+
+Then:
 
 ```python
-from src.predict import predict_captcha
+from captcha_predictor import predict_captcha
 
-answer = predict_captcha("path/to/captcha.png", "models/digit_cnn.h5")
+answer = predict_captcha("captcha.png", "digit_cnn.h5")
 print(answer)  # e.g. "5865"
 ```
+
+Or via CLI:
+
+```bash
+python captcha_predictor.py --image captcha.png --model digit_cnn.h5
+```
+
+`captcha_predictor.py` inlines all preprocessing logic and has no imports from
+`src.*` — the only pip dependencies are `opencv-python`, `Pillow`, `tensorflow`,
+and `numpy`.
 
 ---
 
@@ -167,11 +188,12 @@ print(answer)  # e.g. "5865"
 
 ```
 LTRWDOCR/
+├── captcha_predictor.py   # ← standalone file for integration into other projects
 ├── data/
 │   ├── raw/      # raw downloaded CAPTCHAs (PNG + JPEG, git-ignored)
 │   └── 0/ … 9/  # labeled digit crops, one folder per class (git-ignored)
 ├── examples/
-│   └── predict_captcha.py   # minimal integration example
+│   └── predict_captcha.py   # integration example using captcha_predictor.py
 ├── models/
 │   └── digit_cnn.h5         # trained model (git-ignored)
 ├── src/
@@ -179,7 +201,7 @@ LTRWDOCR/
 │   ├── preprocess.py   # enhance_contrast · detect_n_digits · segment_digits
 │   ├── label.py        # interactive labeling (plain + model-assisted)
 │   ├── train.py        # CNN training with stratified train/val/test split
-│   └── predict.py      # end-to-end inference
+│   └── predict.py      # end-to-end inference (uses src.preprocess)
 └── tests/
 ```
 

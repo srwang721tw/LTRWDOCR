@@ -1,26 +1,26 @@
-"""Example: load the trained model and predict a CAPTCHA image.
+"""Example: use captcha_predictor.py as a standalone module.
 
-Run from the project root with the virtual environment activated:
+Copy ``captcha_predictor.py`` and ``digit_cnn.h5`` into your project,
+then import and call as shown below — no other files needed.
 
+Run from the project root:
     python examples/predict_captcha.py
-
-Adjust ``MODEL_PATH`` and ``IMAGE_PATH`` to match your local files.
 """
 
 import sys
 from pathlib import Path
 
-# Allow importing src when running directly from examples/
+# Allow running from the project root without installing the package
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from src.predict import predict_captcha
+from captcha_predictor import predict_captcha
 
 MODEL_PATH = "models/digit_cnn.h5"
-IMAGE_PATH = "data/raw/sample.png"  # replace with an actual downloaded image
+IMAGE_PATH = "data/raw/0001.jpeg"  # replace with any raw CAPTCHA file
 
 
 def main() -> None:
-    """Run prediction and print the result."""
+    """Predict and print the CAPTCHA answer."""
     result = predict_captcha(IMAGE_PATH, MODEL_PATH)
     print(f"Predicted CAPTCHA: {result}")
 

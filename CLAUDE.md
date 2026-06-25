@@ -22,6 +22,7 @@ On macOS arm64 (Apple Silicon) the correct TensorFlow package is `tensorflow` (n
 | Label (model-assisted) | `python -m src.label --model models/digit_cnn.h5` |
 | Train model | `python -m src.train` |
 | Predict one image | `python -m src.predict --image data/raw/<file>.png` |
+| Standalone predict | `python captcha_predictor.py --image <file> --model models/digit_cnn.h5` |
 | Run tests | `pytest tests/` |
 | Run one test file | `pytest tests/test_preprocess.py -v` |
 
@@ -44,7 +45,7 @@ The pipeline has four stages:
 
 5. **`predict.py`** — calls `detect_n_digits` → `enhance_contrast` → `segment_digits` → model inference → digit string.
 
-`data/segments/` is **not** part of the main workflow. `process_batch` in `preprocess.py` exists only for ad-hoc inspection/testing.
+**`captcha_predictor.py`** (project root) — self-contained portable predictor. Inlines all preprocessing logic from `preprocess.py`; has no `src.*` imports. Copy this file + `digit_cnn.h5` into any external project for drop-in integration.
 
 ## Image spec
 

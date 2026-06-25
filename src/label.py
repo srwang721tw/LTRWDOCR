@@ -45,7 +45,6 @@ def _load_model(model_path: str | Path):
 
 def _predict(model, img: Image.Image, n: int) -> str:
     """Run the model on ``n`` segments of ``img`` and return the digit string."""
-    import numpy as np
     enhanced = enhance_contrast(img)
     segs = segment_digits(enhanced, n)
     arrays = np.stack(
